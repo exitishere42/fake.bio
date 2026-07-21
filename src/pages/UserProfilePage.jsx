@@ -15,7 +15,7 @@ import GlitchEffect from '../components/effects/GlitchEffect'
 import NeonGlow from '../components/effects/NeonGlow'
 import MatrixRain from '../components/effects/MatrixRain'
 import FloatingShapes from '../components/effects/FloatingShapes'
-import { Settings, Sparkles } from 'lucide-react'
+import { Sparkles } from 'lucide-react' // ✅ 'Settings' entfernt
 import { useAuth } from '../contexts/AuthContext'
 
 export default function UserProfilePage() {
@@ -29,111 +29,92 @@ export default function UserProfilePage() {
   const [musicAccepted, setMusicAccepted] = useState(false)
 
   useEffect(() => {
+    let isMounted = true
+
     const loadProfile = async () => {
       try {
         console.log('[UserProfilePage] Loading profile for username/alias:', username)
-        
-        let data = null
-        let error = null
-        
-        const { data: usernameData, error: usernameError } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('username', username.toLowerCase())
-          .single()
 
-        if (usernameError && usernameError.code === 'PGRST116') {
-          console.log('[UserProfilePage] Username not found, checking alias...')
-          
-          const { data: caseData, error: caseError } = await supabase
+        // 1. Suche nach exaktem Usernamen (kleingeschrieben)
+        const { data: usernameData } = await supabase
             .from('profiles')
             .select('*')
-            .eq('username', username)
-            .single()
-          
-          if (!caseError && caseData) {
-            data = caseData
-            error = null
-          } else if (caseError && caseError.code === 'PGRST116') {
-            const { data: aliasData, error: aliasError } = await supabase
+            .eq('username', username.toLowerCase())
+            .maybeSingle()
+
+        let foundData = usernameData
+
+        // 2. Falls nicht gefunden, suche exakte Schreibweise
+        if (!foundData) {
+          const { data: caseData } = await supabase
               .from('profiles')
               .select('*')
-            
-            if (!aliasError && aliasData) {
-              const profileWithAlias = aliasData.find(profile => {
-                const alias = profile.config?.premium_features?.page_alias
-                return alias && alias.toLowerCase() === username.toLowerCase()
-              })
-              
-              if (profileWithAlias) {
-                console.log('[UserProfilePage] Profile found by alias:', profileWithAlias.username)
-                data = profileWithAlias
-                error = null
-              } else {
-                console.log('[UserProfilePage] Profile not found by username or alias')
-                throw new Error('Profile not found')
-              }
-            } else if (aliasError) {
-              throw aliasError
-            } else {
-              throw new Error('Profile not found')
-            }
-          } else if (caseError) {
-            throw caseError
-          }
-        } else if (usernameError) {
-          throw usernameError
-        } else {
-          data = usernameData
-          error = null
+              .eq('username', username)
+              .maybeSingle()
+
+          foundData = caseData
         }
 
-        if (data) {
-          console.log('[UserProfilePage] Profile loaded:', data.username)
-          
-          const isOwner = isAuthenticated && profile?.id === data.id
-          if (!isOwner && data.is_active === false) {
+        // 3. Falls noch immer nicht gefunden, suche über Page-Alias
+        if (!foundData) {
+          const { data: aliasData } = await supabase
+              .from('profiles')
+              .select('*')
+
+          if (aliasData) {
+            foundData = aliasData.find(p => {
+              const alias = p.config?.premium_features?.page_alias
+              return alias && alias.toLowerCase() === username.toLowerCase()
+            })
+          }
+        }
+
+        // Wenn gar kein Profil gefunden wurde
+        if (!foundData) {
+          console.log('[UserProfilePage] Profile not found by username or alias')
+          if (isMounted) {
+            setUserProfile(null)
+            setConfig(null)
+          }
+          return
+        }
+
+        // Profil erfolgreich geladen ✅
+        if (isMounted) {
+          console.log('[UserProfilePage] Profile loaded:', foundData.username)
+
+          const isOwner = isAuthenticated && profile?.id === foundData.id
+          if (!isOwner && foundData.is_active === false) {
             navigate('/')
             return
           }
-          
-          setUserProfile(data)
-          
-          if (data.config && typeof data.config === 'object') {
-            setConfig(data.config)
-            
-            
 
-            if (data.config.music_enabled && data.config.music_url) {
-              
+          setUserProfile(foundData)
 
-              setMusicAccepted(false)
-              
+          if (foundData.config && typeof foundData.config === 'object') {
+            setConfig(foundData.config)
 
-              setTimeout(() => {
-                setShowMusicWarning(true)
-              }, 100)
-              console.log('[UserProfilePage] Music warning will show - isOwner:', isOwner, 'music_enabled:', data.config.music_enabled, 'music_url:', !!data.config.music_url)
-            } else {
-              setMusicAccepted(false)
-              setShowMusicWarning(false)
+            if (foundData.config.music_enabled && foundData.config.music_url && !musicAccepted) {
+              setShowMusicWarning(true)
             }
           } else {
-            setConfig(getDefaultConfig(data))
+            setConfig(getDefaultConfig(foundData))
           }
         }
       } catch (error) {
-        console.error('[UserProfilePage] Error loading profile:', error)
-        setUserProfile(null)
-        setConfig(null)
-        setShowMusicWarning(false)
-        setMusicAccepted(false)
+        if (isMounted) {
+          console.error('[UserProfilePage] Error loading profile:', error)
+          setUserProfile(null)
+          setConfig(null)
+          setShowMusicWarning(false)
+          setMusicAccepted(false)
+        }
       } finally {
-        setLoading(false)
+        if (isMounted) setLoading(false)
       }
     }
 
-    const getDefaultConfig = (profile) => ({
+    const getDefaultConfig = (profileData) => ({
       hero_title: '',
       hero_subtitle: '',
       hero_description: '',
@@ -152,7 +133,7 @@ export default function UserProfilePage() {
       instagram_url: '',
       youtube_url: '',
       website_url: '',
-      email: profile.email || '',
+      email: profileData?.email || '',
       location: '',
       timezone: 'Asia/Kolkata',
       show_date: true,
@@ -192,51 +173,36 @@ export default function UserProfilePage() {
     } else {
       setLoading(false)
     }
-  }, [username, isAuthenticated, profile?.id, navigate])
 
-  
+    return () => {
+      isMounted = false
+    }
+  }, [username]) // ✅ Kein Re-Trigger mehr beim Authentifizieren
 
   useEffect(() => {
     if (!userProfile || loading) return
-    
+
     const isOwner = isAuthenticated && profile?.username === username
     if (!isOwner && userProfile.id) {
-      
-
       const viewKey = `view_${userProfile.id}`
       const sessionViewKey = `session_view_${userProfile.id}`
-      const viewCooldown = 24 * 60 * 60 * 1000 
-
-      
-      
+      const viewCooldown = 24 * 60 * 60 * 1000
 
       const sessionViewed = sessionStorage.getItem(sessionViewKey)
-      
-      
-
       const lastViewTime = localStorage.getItem(viewKey)
       const now = Date.now()
-      
-      const shouldTrackView = !sessionViewed && (!lastViewTime || (now - parseInt(lastViewTime)) > viewCooldown)
-      
-      if (shouldTrackView) {
-        
 
+      const shouldTrackView = !sessionViewed && (!lastViewTime || (now - parseInt(lastViewTime)) > viewCooldown)
+
+      if (shouldTrackView) {
         const trackView = async () => {
           try {
             const { error } = await supabase.rpc('increment_view_count', { profile_id: userProfile.id })
             if (error) {
               console.error('Failed to track view:', error)
             } else {
-              
-
               sessionStorage.setItem(sessionViewKey, 'true')
-              
-
               localStorage.setItem(viewKey, now.toString())
-              
-              
-
               setUserProfile(prev => ({
                 ...prev,
                 view_count: (prev.view_count || 0) + 1
@@ -262,25 +228,25 @@ export default function UserProfilePage() {
     if (customFontsEnabled && customFontUrl && customFontFamily && isPremium) {
       const linkId = 'custom-font-link'
       let fontLink = document.getElementById(linkId)
-      
+
       if (!fontLink) {
         fontLink = document.createElement('link')
         fontLink.id = linkId
         fontLink.rel = 'stylesheet'
         document.head.appendChild(fontLink)
       }
-      
+
       fontLink.href = customFontUrl
 
       const styleId = 'custom-font-style'
       let fontStyle = document.getElementById(styleId)
-      
+
       if (!fontStyle) {
         fontStyle = document.createElement('style')
         fontStyle.id = styleId
         document.head.appendChild(fontStyle)
       }
-      
+
       fontStyle.textContent = `
         body, * {
           font-family: "${customFontFamily}", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
@@ -309,7 +275,7 @@ export default function UserProfilePage() {
 
     if (metadata || seo) {
       const isPremium = userProfile?.is_premium === true && (!userProfile?.premium_expires_at || new Date(userProfile.premium_expires_at) > new Date())
-      
+
       if (isPremium) {
         if (metadata?.page_title) {
           document.title = metadata.page_title
@@ -328,13 +294,8 @@ export default function UserProfilePage() {
           tag.setAttribute('content', content)
         }
 
-        if (metadata?.meta_description) {
-          updateMetaTag('description', metadata.meta_description)
-        }
-
-        if (metadata?.meta_keywords) {
-          updateMetaTag('keywords', metadata.meta_keywords)
-        }
+        if (metadata?.meta_description) updateMetaTag('description', metadata.meta_description)
+        if (metadata?.meta_keywords) updateMetaTag('keywords', metadata.meta_keywords)
 
         if (metadata?.og_title) {
           updateMetaTag('og:title', metadata.og_title, 'property')
@@ -349,16 +310,12 @@ export default function UserProfilePage() {
         }
 
         const ogImage = metadata?.og_image
-        if (ogImage) {
-          updateMetaTag('og:image', ogImage, 'property')
-        }
+        if (ogImage) updateMetaTag('og:image', ogImage, 'property')
 
         updateMetaTag('og:type', 'website', 'property')
         updateMetaTag('og:url', window.location.href, 'property')
 
-        if (metadata?.twitter_card) {
-          updateMetaTag('twitter:card', metadata.twitter_card)
-        }
+        if (metadata?.twitter_card) updateMetaTag('twitter:card', metadata.twitter_card)
 
         if (seo?.custom_canonical) {
           let canonical = document.querySelector('link[rel="canonical"]')
@@ -370,9 +327,7 @@ export default function UserProfilePage() {
           canonical.setAttribute('href', seo.custom_canonical)
         }
 
-        if (seo?.robots) {
-          updateMetaTag('robots', seo.robots)
-        }
+        if (seo?.robots) updateMetaTag('robots', seo.robots)
 
         if (seo?.custom_head) {
           const customHeadId = 'custom-head-seo'
@@ -414,7 +369,6 @@ export default function UserProfilePage() {
             style.remove()
           })
         }
-
       }
     }
 
@@ -427,13 +381,13 @@ export default function UserProfilePage() {
     if (config?.cursor_icon_url) {
       const styleId = 'custom-cursor-style'
       let styleElement = document.getElementById(styleId)
-      
+
       if (!styleElement) {
         styleElement = document.createElement('style')
         styleElement.id = styleId
         document.head.appendChild(styleElement)
       }
-      
+
       styleElement.textContent = `
         * {
           cursor: url(${config.cursor_icon_url}), auto !important;
@@ -442,56 +396,53 @@ export default function UserProfilePage() {
           cursor: url(${config.cursor_icon_url}), pointer !important;
         }
       `
-      
+
       return () => {
         const element = document.getElementById(styleId)
-        if (element) {
-          element.remove()
-        }
+        if (element) element.remove()
       }
     }
   }, [config?.cursor_icon_url])
 
-
   if (loading) {
     return (
-      <div className="min-h-screen bg-black text-white font-mono flex items-center justify-center">
-        <div className="flex flex-col items-center justify-center space-y-4">
-          <div className="relative w-12 h-12">
-            <div className="w-12 h-12 border-3 border-white/20 rounded-full"></div>
-            <div className="w-12 h-12 border-3 border-white/50 border-t-white rounded-full animate-spin absolute top-0 left-0"></div>
+        <div className="min-h-screen bg-black text-white font-mono flex items-center justify-center">
+          <div className="flex flex-col items-center justify-center space-y-4">
+            <div className="relative w-12 h-12">
+              <div className="w-12 h-12 border-3 border-white/20 rounded-full"></div>
+              <div className="w-12 h-12 border-3 border-white/50 border-t-white rounded-full animate-spin absolute top-0 left-0"></div>
+            </div>
+            <p className="text-sm text-gray-400">Loading profile...</p>
           </div>
-          <p className="text-sm text-gray-400">Loading profile...</p>
         </div>
-      </div>
     )
   }
 
   if (!userProfile) {
     return (
-      <div className="min-h-screen bg-black text-white font-mono flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="text-2xl mb-4">Profile Not Found</h1>
-          <p className="text-gray-400 mb-4">The user "{username}" doesn't exist.</p>
-          <Link to="/" className="text-orange-400 hover:text-orange-300">
-            Go Home
-          </Link>
+        <div className="min-h-screen bg-black text-white font-mono flex items-center justify-center">
+          <div className="text-center">
+            <h1 className="text-2xl mb-4">Profile Not Found</h1>
+            <p className="text-gray-400 mb-4">The user "{username}" doesn't exist.</p>
+            <Link to="/" className="text-orange-400 hover:text-orange-300">
+              Go Home
+            </Link>
+          </div>
         </div>
-      </div>
     )
   }
 
   if (!config) {
     return (
-      <div className="min-h-screen bg-black text-white font-mono flex items-center justify-center">
-        <div className="flex flex-col items-center justify-center space-y-4">
-          <div className="relative w-12 h-12">
-            <div className="w-12 h-12 border-3 border-white/20 rounded-full"></div>
-            <div className="w-12 h-12 border-3 border-white/50 border-t-white rounded-full animate-spin absolute top-0 left-0"></div>
+        <div className="min-h-screen bg-black text-white font-mono flex items-center justify-center">
+          <div className="flex flex-col items-center justify-center space-y-4">
+            <div className="relative w-12 h-12">
+              <div className="w-12 h-12 border-3 border-white/20 rounded-full"></div>
+              <div className="w-12 h-12 border-3 border-white/50 border-t-white rounded-full animate-spin absolute top-0 left-0"></div>
+            </div>
+            <p className="text-sm text-gray-400">Loading configuration...</p>
           </div>
-          <p className="text-sm text-gray-400">Loading configuration...</p>
         </div>
-      </div>
     )
   }
 
@@ -505,20 +456,16 @@ export default function UserProfilePage() {
   const handleMusicDecline = () => {
     setShowMusicWarning(false)
     setMusicAccepted(false)
-    
-
     navigate('/')
   }
 
-  
-
   if (showMusicWarning && config && config.music_enabled && config.music_url && !musicAccepted && !loading) {
     return (
-      <MusicWarning
-        config={config}
-        onAccept={handleMusicAccept}
-        onDecline={handleMusicDecline}
-      />
+        <MusicWarning
+            config={config}
+            onAccept={handleMusicAccept}
+            onDecline={handleMusicDecline}
+        />
     )
   }
 
@@ -526,77 +473,76 @@ export default function UserProfilePage() {
   const isPremium = userProfile?.is_premium === true && (!userProfile?.premium_expires_at || new Date(userProfile.premium_expires_at) > new Date())
 
   return (
-    <div className={`min-h-screen bg-black text-white font-mono overflow-x-hidden w-full max-w-full flex flex-col ${specialEffects.glitch_effect && isPremium ? 'glitch-effect' : ''} ${specialEffects.neon_glow && isPremium ? 'neon-glow-effect' : ''}`}>
-      {config?.layout && <LayoutStyles layout={config.layout} />}
-      {isPremium && specialEffects.particle_effects && <ParticleEffects />}
-      {isPremium && specialEffects.glitch_effect && <GlitchEffect />}
-      {isPremium && specialEffects.neon_glow && <NeonGlow />}
-      {isPremium && specialEffects.matrix_rain && <MatrixRain />}
-      {isPremium && specialEffects.floating_shapes && <FloatingShapes />}
-      {userProfile?.is_premium && config.light_rays_enabled && (
-        <LightRays 
-          raysOrigin={config.light_rays_origin || "top-center"}
-          raysColor={config.light_rays_color || "#ffffff"}
-          raysSpeed={config.light_rays_speed || 1}
-          lightSpread={config.light_rays_spread || 1}
-          rayLength={config.light_rays_length || 2}
-          followMouse={config.light_rays_follow_mouse !== false}
-          mouseInfluence={config.light_rays_mouse_influence || 0.15}
+      <div className={`min-h-screen bg-black text-white font-mono overflow-x-hidden w-full max-w-full flex flex-col ${specialEffects.glitch_effect && isPremium ? 'glitch-effect' : ''} ${specialEffects.neon_glow && isPremium ? 'neon-glow-effect' : ''}`}>
+        {config?.layout && <LayoutStyles layout={config.layout} />}
+        {isPremium && specialEffects.particle_effects && <ParticleEffects />}
+        {isPremium && specialEffects.glitch_effect && <GlitchEffect />}
+        {isPremium && specialEffects.neon_glow && <NeonGlow />}
+        {isPremium && specialEffects.matrix_rain && <MatrixRain />}
+        {isPremium && specialEffects.floating_shapes && <FloatingShapes />}
+        {userProfile?.is_premium && config.light_rays_enabled && (
+            <LightRays
+                raysOrigin={config.light_rays_origin || "top-center"}
+                raysColor={config.light_rays_color || "#ffffff"}
+                raysSpeed={config.light_rays_speed || 1}
+                lightSpread={config.light_rays_spread || 1}
+                rayLength={config.light_rays_length || 2}
+                followMouse={config.light_rays_follow_mouse !== false}
+                mouseInfluence={config.light_rays_mouse_influence || 0.15}
+            />
+        )}
+        <Header
+            username={userProfile.username}
+            displayName={userProfile.display_name}
+            config={config}
+            userProfile={userProfile}
+            musicAccepted={musicAccepted || isOwner}
         />
-      )}
-      <Header 
-        username={userProfile.username}
-        displayName={userProfile.display_name}
-        config={config}
-        userProfile={userProfile}
-        musicAccepted={musicAccepted || isOwner}
-      />
-      {isOwner && (
-        <Link
-          to="/dashboard"
-          className="group fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-5 py-3 rounded-xl border border-orange-500/30 bg-gradient-to-r from-orange-500/10 via-orange-500/5 to-orange-500/10 hover:from-orange-500/20 hover:via-orange-500/10 hover:to-orange-500/20 hover:border-orange-500/50 transition-all duration-300 backdrop-blur-xl shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30 hover:scale-105"
-        >
-          <div className="relative">
-            <div className="absolute inset-0 bg-gradient-to-r from-orange-500/20 to-transparent rounded-lg blur opacity-0 group-hover:opacity-100 transition-opacity"></div>
-            <Sparkles className="w-5 h-5 text-orange-300 relative z-10 group-hover:rotate-12 transition-transform" />
-          </div>
-          <span className="font-semibold text-white relative z-10">Dashboard</span>
-          <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-white/5 via-transparent to-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-        </Link>
-      )}
-      <main className="w-full max-w-full overflow-x-hidden flex-1">
-        {config.section_visibility?.hero !== false && (
-          <div 
-            className="hero-background w-full max-w-full" 
-            style={{ 
-              backgroundImage: config.background_image_url 
-                ? `url(${config.background_image_url})` 
-                : 'none' 
-            }}
-          >
-            <HeroSection config={config} />
-          </div>
+        {isOwner && (
+            <Link
+                to="/dashboard"
+                className="group fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-5 py-3 rounded-xl border border-orange-500/30 bg-gradient-to-r from-orange-500/10 via-orange-500/5 to-orange-500/10 hover:from-orange-500/20 hover:via-orange-500/10 hover:to-orange-500/20 hover:border-orange-500/50 transition-all duration-300 backdrop-blur-xl shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30 hover:scale-105"
+            >
+              <div className="relative">
+                <div className="absolute inset-0 bg-gradient-to-r from-orange-500/20 to-transparent rounded-lg blur opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                <Sparkles className="w-5 h-5 text-orange-300 relative z-10 group-hover:rotate-12 transition-transform" />
+              </div>
+              <span className="font-semibold text-white relative z-10">Dashboard</span>
+              <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-white/5 via-transparent to-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            </Link>
         )}
-        {config.section_visibility?.about !== false && (
-          <div className={`w-full max-w-full pattern-${config.section_backgrounds?.about || 'dots'}`}>
-            <AboutPage config={config} userProfile={userProfile} />
-          </div>
+        <main className="w-full max-w-full overflow-x-hidden flex-1">
+          {config.section_visibility?.hero !== false && (
+              <div
+                  className="hero-background w-full max-w-full"
+                  style={{
+                    backgroundImage: config.background_image_url
+                        ? `url(${config.background_image_url})`
+                        : 'none'
+                  }}
+              >
+                <HeroSection config={config} />
+              </div>
+          )}
+          {config.section_visibility?.about !== false && (
+              <div className={`w-full max-w-full pattern-${config.section_backgrounds?.about || 'dots'}`}>
+                <AboutPage config={config} userProfile={userProfile} />
+              </div>
+          )}
+          {config.section_visibility?.projects !== false && (
+              <div className={`w-full max-w-full pattern-${config.section_backgrounds?.projects || 'grid'}`}>
+                <ProjectsPage config={config} />
+              </div>
+          )}
+          {config.section_visibility?.skillset !== false && (
+              <div className={`w-full max-w-full pattern-${config.section_backgrounds?.skillset || 'dots'}`}>
+                <SkillsetPage config={config} />
+              </div>
+          )}
+        </main>
+        {config.section_visibility?.footer !== false && (
+            <Footer config={config} />
         )}
-        {config.section_visibility?.projects !== false && (
-          <div className={`w-full max-w-full pattern-${config.section_backgrounds?.projects || 'grid'}`}>
-            <ProjectsPage config={config} />
-          </div>
-        )}
-        {config.section_visibility?.skillset !== false && (
-          <div className={`w-full max-w-full pattern-${config.section_backgrounds?.skillset || 'dots'}`}>
-            <SkillsetPage config={config} />
-          </div>
-        )}
-      </main>
-      {config.section_visibility?.footer !== false && (
-        <Footer config={config} />
-      )}
-    </div>
+      </div>
   )
 }
-
