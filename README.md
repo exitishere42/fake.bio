@@ -1,4 +1,4 @@
-# Radium
+# fake.bio
 
 *A modern link-in-bio and portfolio platform, serving as a powerful alternative to guns.lol*
 
@@ -6,7 +6,7 @@
 
 ## Overview
 
-Radium is a comprehensive profile creation platform that enables users to build stunning, feature-rich link-in-bio pages and portfolios without writing code. With over 970,000 users on platforms like guns.lol, Radium aims to provide a more customizable and modern alternative for creating your online presence.
+fake.bio is a comprehensive profile creation platform that enables users to build stunning, feature-rich link-in-bio pages and portfolios without writing code. With over 970,000 users on platforms like guns.lol, Radium aims to provide a more customizable and modern alternative for creating your online presence.
 
 <div align="center">
   <img src="images/dash1.png" alt="Dashboard Preview" width="600">
