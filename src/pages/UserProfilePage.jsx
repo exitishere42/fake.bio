@@ -15,7 +15,7 @@ import GlitchEffect from '../components/effects/GlitchEffect'
 import NeonGlow from '../components/effects/NeonGlow'
 import MatrixRain from '../components/effects/MatrixRain'
 import FloatingShapes from '../components/effects/FloatingShapes'
-import { Sparkles } from 'lucide-react' // ✅ 'Settings' entfernt
+import { Sparkles } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 export default function UserProfilePage() {
@@ -28,6 +28,7 @@ export default function UserProfilePage() {
   const [showMusicWarning, setShowMusicWarning] = useState(false)
   const [musicAccepted, setMusicAccepted] = useState(false)
 
+  // 1. Profil laden (ohne Endlosschleife)
   useEffect(() => {
     let isMounted = true
 
@@ -35,7 +36,7 @@ export default function UserProfilePage() {
       try {
         console.log('[UserProfilePage] Loading profile for username/alias:', username)
 
-        // 1. Suche nach exaktem Usernamen (kleingeschrieben)
+        // Suche 1: Kleingeschriebener Username
         const { data: usernameData } = await supabase
             .from('profiles')
             .select('*')
@@ -44,7 +45,7 @@ export default function UserProfilePage() {
 
         let foundData = usernameData
 
-        // 2. Falls nicht gefunden, suche exakte Schreibweise
+        // Suche 2: Exakte Schreibweise
         if (!foundData) {
           const { data: caseData } = await supabase
               .from('profiles')
@@ -55,7 +56,7 @@ export default function UserProfilePage() {
           foundData = caseData
         }
 
-        // 3. Falls noch immer nicht gefunden, suche über Page-Alias
+        // Suche 3: Page-Alias
         if (!foundData) {
           const { data: aliasData } = await supabase
               .from('profiles')
@@ -69,7 +70,6 @@ export default function UserProfilePage() {
           }
         }
 
-        // Wenn gar kein Profil gefunden wurde
         if (!foundData) {
           console.log('[UserProfilePage] Profile not found by username or alias')
           if (isMounted) {
@@ -79,7 +79,6 @@ export default function UserProfilePage() {
           return
         }
 
-        // Profil erfolgreich geladen ✅
         if (isMounted) {
           console.log('[UserProfilePage] Profile loaded:', foundData.username)
 
@@ -177,46 +176,42 @@ export default function UserProfilePage() {
     return () => {
       isMounted = false
     }
-  }, [username]) // ✅ Kein Re-Trigger mehr beim Authentifizieren
+  }, [username])
 
+  // 2. Profile Views tracken (ohne Re-Render-Loop)
   useEffect(() => {
-    if (!userProfile || loading) return
+    if (!userProfile?.id || loading) return
 
     const isOwner = isAuthenticated && profile?.username === username
-    if (!isOwner && userProfile.id) {
-      const viewKey = `view_${userProfile.id}`
-      const sessionViewKey = `session_view_${userProfile.id}`
-      const viewCooldown = 24 * 60 * 60 * 1000
+    if (isOwner) return
 
-      const sessionViewed = sessionStorage.getItem(sessionViewKey)
-      const lastViewTime = localStorage.getItem(viewKey)
-      const now = Date.now()
+    const viewKey = `view_${userProfile.id}`
+    const sessionViewKey = `session_view_${userProfile.id}`
+    const viewCooldown = 24 * 60 * 60 * 1000
 
-      const shouldTrackView = !sessionViewed && (!lastViewTime || (now - parseInt(lastViewTime)) > viewCooldown)
+    const sessionViewed = sessionStorage.getItem(sessionViewKey)
+    const lastViewTime = localStorage.getItem(viewKey)
+    const now = Date.now()
 
-      if (shouldTrackView) {
-        const trackView = async () => {
-          try {
-            const { error } = await supabase.rpc('increment_view_count', { profile_id: userProfile.id })
-            if (error) {
-              console.error('Failed to track view:', error)
-            } else {
-              sessionStorage.setItem(sessionViewKey, 'true')
-              localStorage.setItem(viewKey, now.toString())
-              setUserProfile(prev => ({
-                ...prev,
-                view_count: (prev.view_count || 0) + 1
-              }))
-            }
-          } catch (err) {
-            console.error('Failed to track view:', err)
+    const shouldTrackView = !sessionViewed && (!lastViewTime || (now - parseInt(lastViewTime)) > viewCooldown)
+
+    if (shouldTrackView) {
+      const trackView = async () => {
+        try {
+          const { error } = await supabase.rpc('increment_view_count', { profile_id: userProfile.id })
+          if (!error) {
+            sessionStorage.setItem(sessionViewKey, 'true')
+            localStorage.setItem(viewKey, now.toString())
           }
+        } catch (err) {
+          console.error('Failed to track view:', err)
         }
-        trackView()
       }
+      trackView()
     }
-  }, [userProfile, isAuthenticated, profile, username, loading])
+  }, [userProfile?.id, loading])
 
+  // 3. Custom Fonts
   useEffect(() => {
     if (!config || !userProfile) return
 
@@ -267,6 +262,7 @@ export default function UserProfilePage() {
     }
   }, [config, userProfile])
 
+  // 4. SEO & Metadata
   useEffect(() => {
     if (!config || !userProfile) return
 
@@ -377,6 +373,7 @@ export default function UserProfilePage() {
     }
   }, [config, userProfile])
 
+  // 5. Custom Cursor
   useEffect(() => {
     if (config?.cursor_icon_url) {
       const styleId = 'custom-cursor-style'
